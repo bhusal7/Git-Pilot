@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import warnings
 from pathlib import Path
 
@@ -17,6 +19,8 @@ REPO_DIR.mkdir(exist_ok=True)
 
 
 def _resolve_repo_path(repo_path: str) -> str:
+    repo_path = repo_path.strip()
+
     if repo_path.startswith(("http://", "https://")):
         repo_name = repo_path.rstrip("/").split("/")[-1]
         if repo_name.endswith(".git"):
@@ -48,9 +52,18 @@ def _load_documents(local_repo_path: str):
     raise last_error
 
 
+def list_jsx_files(repo_path: str) -> list[str]:
+    repo_path = Path(repo_path)
+
+    if not repo_path.exists():
+        return []
+
+    jsx_files = sorted(repo_path.rglob("*.jsx"))
+    return [str(f.relative_to(repo_path)) for f in jsx_files]
+
+
 def build_rag(repo_path: str):
     local_repo_path = _resolve_repo_path(repo_path)
-
     documents = _load_documents(local_repo_path)
 
     splitter = RecursiveCharacterTextSplitter(
@@ -74,10 +87,10 @@ def build_rag(repo_path: str):
 
     retriever = vector_store.as_retriever(
         search_type="mmr",
-        search_kwargs={"k": 1},
+        search_kwargs={"k": 2},
     )
 
-    return retriever
+    return retriever, local_repo_path
 
 
 if __name__ == "__main__":

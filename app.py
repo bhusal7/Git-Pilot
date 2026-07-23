@@ -310,9 +310,17 @@ color:#94a3b8;
 
 Built with ❤️ using:
 
-LangChain • RAG • Agents • Groq • Streamlit
+LangChain • RAG • Agents • Mistral • Streamlit
 
 </div>
 """,
     unsafe_allow_html=True,
 )
+
+
+
+
+
+
+
+# analize it with provides the names of all .jsx file which are include in it

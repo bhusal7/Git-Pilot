@@ -1,143 +1,68 @@
 from __future__ import annotations
+
+from pathlib import Path
 from typing import Dict
 
-from main import build_rag
-from agents import (
-    build_report_agent,
-    build_repository_agent,
-    build_search_agent,
-    critic_chain,
-    explain_chain,
-)
+from main import build_rag, list_jsx_files
+from agents import analysis_chain
+
+REPORT_DIR = Path("reports")
+REPORT_DIR.mkdir(exist_ok=True)
 
 
-def human_approval(step: str) -> bool:
-    """
-    Human In The Loop (HITL)
-    """
-
-    while True:
-        choice = input(f"Approve '{step}'? (y/n): ").strip().lower()
-
-        if choice in ["y", "yes"]:
-            return True
-        elif choice in ["n", "no"]:
-            return False
-
-        print("Please enter y or n")
+def save_report_local(filename: str, content: str) -> str:
+    timestamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = REPORT_DIR / f"{filename}_{timestamp}.md"
+    filepath.write_text(content, encoding="utf-8")
+    return str(filepath)
 
 
 def run_repo_analyzer(query: str, repo_path: str) -> Dict:
     state = {}
 
-    if query.startswith(("http://", "https://")):
-        retriever_query = "Explain this repository"
-        analysis_query = f"Analyze this GitHub repository: {query}"
-    else:
-        retriever_query = query
-        analysis_query = query
+    query = (query or "").strip()
+    repo_path = (repo_path or "").strip()
 
-    retriever = build_rag(repo_path)
+    if not repo_path and query.startswith(("http://", "https://")):
+        repo_path = query
+        query = "Summarize this repository."
 
+    retriever, local_repo_path = build_rag(repo_path)
+    jsx_files = list_jsx_files(local_repo_path)
+
+    retriever_query = query or "Summarize this repository."
     docs = retriever.invoke(retriever_query)
 
-    context = "\n\n".join(doc.page_content for doc in docs)
+    if not isinstance(docs, list):
+        docs = [docs]
+
+    context = "\n\n".join(
+        doc.page_content for doc in docs[:2] if hasattr(doc, "page_content")
+    )
+
+    jsx_block = (
+        "\n".join(f"- {file}" for file in jsx_files)
+        if jsx_files
+        else "- No .jsx files found."
+    )
+
+    report = analysis_chain.invoke(
+        {
+            "query": retriever_query,
+            "context": context,
+            "jsx_files": jsx_block,
+        }
+    )
+
+    saved_path = save_report_local(Path(local_repo_path).name, report)
 
     state["query"] = query
+    state["repo_path"] = local_repo_path
+    state["jsx_files"] = jsx_files
     state["context"] = context
-
-    print("=" * 60)
-    print("STEP 1 : SEARCH AGENT")
-    print("=" * 60)
-
-    search_agent = build_search_agent()
-
-    search_result = search_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": analysis_query,
-                }
-            ]
-        }
-    )
-
-    state["search"] = search_result["messages"][-1].content
-
-    print("=" * 60)
-    print("STEP 2 : REPOSITORY AGENT")
-    print("=" * 60)
-
-    repo_agent = build_repository_agent()
-
-    repo_result = repo_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": analysis_query,
-                }
-            ]
-        }
-    )
-
-    state["repository"] = repo_result["messages"][-1].content
-
-    print("=" * 60)
-    print("STEP 3 : EXPLANATION")
-    print("=" * 60)
-
-    report = explain_chain.invoke(
-        {
-            "query": analysis_query,
-            "context": context,
-        }
-    )
-
     state["report"] = report
-
-    print("=" * 60)
-    print("STEP 4 : REVIEW")
-    print("=" * 60)
-
-    feedback = critic_chain.invoke(
-        {
-            "draft": report,
-        }
-    )
-
-    state["feedback"] = feedback
-
-    if not human_approval("save report"):
-        return state
-
-    print("=" * 60)
-    print("STEP 5 : REPORT AGENT")
-    print("=" * 60)
-
-    report_agent = build_report_agent()
-
-    report_result = report_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"""
-Save the following GitHub repository analysis.
-
-Filename:
-github_repository_analysis
-
-Content:
-{feedback}
-""",
-                }
-            ]
-        }
-    )
-
-    state["saved_report"] = report_result["messages"][-1].content
+    state["feedback"] = report
+    state["saved_report"] = f"Report saved to {saved_path}"
 
     return state
 
